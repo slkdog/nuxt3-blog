@@ -1,0 +1,107 @@
+kind: pipeline
+type: docker
+name: build
+
+trigger:
+  event:
+    - push
+  branch:
+    - master
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: build_project
+    image: node:18
+    volumes:
+      - name: cache
+        path: /drone/src/node_modules
+    environment:
+      MONGODB_URI:
+        from_secret: MONGODB_URI
+      CommentRepoId:
+        from_secret: CommentRepoId
+      CommentDiscussionCategoryId:
+        from_secret: CommentDiscussionCategoryId
+      CloudflareAnalyze:
+        from_secret: CloudflareAnalyze
+    commands:
+      - npm i -g pnpm
+      - pnpm i
+      - pnpm build
+
+  - name: build_docker
+    image: docker:latest
+    volumes:
+      - name: docker
+        path: /var/run/docker.sock
+    environment:
+      APP_NAME: nuxt3-blog-app
+      IMAGE_NAME: nuxt3-blog:latest
+      MONGODB_URI:
+        from_secret: MONGODB_URI
+    commands:
+      - docker ps -q --filter "name=$APP_NAME" | xargs -r docker stop
+      - docker ps -aq --filter "name=$APP_NAME" | xargs -r docker rm
+      - docker images --filter "reference=$IMAGE_NAME" -q | xargs -r docker rmi
+      - docker build -t $IMAGE_NAME .
+      - > 
+        docker run -d
+        --name=$APP_NAME
+        --restart=always
+        -e MONGODB_URI=$MONGODB_URI
+        -p 127.0.0.1:8451:3000
+        $IMAGE_NAME
+
+volumes:
+  - name: cache
+    host:
+      path: /var/cache/drone-nuxt3-blog
+  - name: docker
+    host:
+      path: /var/run/docker.sock
+
+---
+
+kind: pipeline
+type: docker
+name: backup_img
+
+trigger:
+  event:
+    - cron
+  cron:
+    - backup_img
+
+platform:
+  os: linux
+  arch: amd64
+
+steps:
+  - name: backup_img
+    image: node:18
+    volumes:
+      - name: cache
+        path: /drone/src/node_modules
+      - name: imgs
+        path: /drone/src/imgs
+    environment:
+      NB_PASSWD:
+        from_secret: NB_PASSWD
+      NB_IMG_REGEX:
+        from_secret: NB_IMG_REGEX
+    commands:
+      - npm i -g pnpm
+      - pnpm genimg
+      - pnpm downimg
+
+
+volumes:
+  - name: cache
+    host:
+      path: /var/cache/drone-nuxt3-blog
+  - name: imgs
+    host:
+      path: /data/nuxt3-blog-imgs
